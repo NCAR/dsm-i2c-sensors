@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "i2c_sensors"
+version = "1.0.0"
+description = "Simple Python drivers and utilities for I2C sensors (ADC128D818, INA260)."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "Slava Fedorchuk", email = "slavafedor@ucar.edu" }
+]
+
+dependencies = [
+    "smbus2>=0.4.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "mypy",
+    "flake8",
+]
+
+[project.scripts]
+i2c-sensors = "i2c_sensors.cli:main"
+power-monitor = "power_monitor.power_monitor:main"
+udp-monitor = "udp_monitor.udp_monitor:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["i2c_sensors*", "power_monitor*","udp_monitor*"]
