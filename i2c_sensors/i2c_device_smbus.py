@@ -1,31 +1,19 @@
-"""
-Thin I²C device base class and helpers
-"""
-from __future__ import annotations
-from typing import Iterable, Dict, Any, Optional, List, Tuple
-import time
+import logging
+from .i2c_device import I2CConfig, I2CDevice
+from typing import Iterable, List
 
 try:
     # Linux I²C userspace helper
     from smbus2 import SMBus, i2c_msg
 except ImportError:  # fall back to smbus if needed
-    from smbus import SMBus  # type: ignore
+    from smbus import SMBus, i2c_msg  # type: ignore
 
 
-class I2CConfig:
-    bus: int
-    address: int
-    freq_hz: Optional[int] = None  # informational; not configured here
-
-    def __init__(self, bus: int, address: int, freq_hz: Optional[int] = None):
-        self.bus = bus
-        self.address = address
-        self.freq_hz = freq_hz
-
-class I2CDevice:
+class I2CDeviceSmBus (I2CDevice):
     """
-    Thin base for I²C register devices. Methods are intentionally small & explicit
-    to make a later C++ port straightforward.
+    Simple I²C register device using smbus2.
+    7-bit address only; no 10-bit support.
+    For direct use on the same hardware: for example - to use on Raspberry Pi
     """
     cfg: I2CConfig
     bus: SMBus
@@ -64,20 +52,9 @@ class I2CDevice:
         self.bus.i2c_rdwr(read)
         return bytes(list(read))
 
-    # ---- Device lifecycle ------------------------------------------------------
-    def configure(self, **kwargs) -> None:
-        """
-        Virtual: override in subclasses to apply mode/averaging/rates.
-        """
-        pass
-
     def close(self) -> None:
         try:
             self.bus.close()
         except Exception:
             pass
 
-    # ---- Simple file writer ----------------------------------------------------
-    def write_dict_to_file(self, path: str, data: Dict[str, Any]) -> None:
-        from .export import write_auto
-        write_auto(path, data)

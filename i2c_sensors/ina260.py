@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional
 from enum import IntFlag, IntEnum
 
 import i2c_sensors.utils as utils
-from .base import I2CDevice, I2CConfig
+from .i2c_device import I2CDevice, I2CConfig
 
 # Register addresses (datasheet Table / summary)
 class INA260_CONFIG_REG(IntEnum):

@@ -43,14 +43,15 @@ def i2c_scan(ctrl = I2cController) -> list[int]:
             # ch = i2c.read_from(0x00, 1, False, True) | ''  # try to read one byte from register 0x00
             # print( "'{ch}'(0x{int(ch):02X}) ")
             # if  ch != '': 
-            # if i2c.poll(relax = True):  # ACK?
-            #     found.append(addr)
-            #     print(f"*0x{addr:02X}*", end="", flush=True)
-            # else:
-            #     print(".", end="", flush=True)
-            i2c.write(b'')  # try to write zero bytes
-            found.append(addr)
-            print(f"\n0x{addr:02X}\n", end="", flush=True)
+            if i2c.poll(write=True,relax=False):  # ACK?
+                found.append(addr)
+                print(f"*0x{addr:02X}*", end="", flush=True)
+            else:
+                print(".", end="", flush=True)
+            # i2c.write(b'')  # try to write zero bytes
+            # found.append(addr)
+            # print(f"\n0x{addr:02X}\n", end="", flush=True)
+            sleep(0.01)  # be kind to the bus
 
         except I2cNackError:
             print("*", end="", flush=True)
@@ -131,19 +132,26 @@ if __name__ == "__main__":
     print(f"\nProbing FTDI device S/N={SER} ... Freq={freq}Hz")
 
     ctrl = I2cController()
-    ctrl.force_clock_mode(False)  # use standard I2C open-drain mode
+    ctrl.force_clock_mode(True)  # use standard I2C open-drain mode
     print(f"0x{ctrl.direction:04X}")
     try:
+        url = f'ftdi://ftdi::{SER}/2'
+        # url = f'ftdi://ftdi:4232h/2'
+        ctrl.configure(url, frequency=freq,direction=0x03)  # all pins input (safe)
+        print(f"\n\nProbing {url} ...")
         while True:
-
-            for i in (2,2):
-                url = f'ftdi://ftdi::{SER}/{i}'
-
-                ctrl.configure(url, frequency=freq,direction=0x03)  # all pins input (safe)
-                print(f"\n\nProbing {url} ...")
-                addrs = i2c_scan(ctrl)
-                print(f'\n{url}:', [f'0x{a:02X}' for a in addrs])
-
+            i2c_scan(ctrl)
+            # for addr in range(0x03, 0x78):
+            #     p = ctrl.get_port(addr)
+            #     try:
+            #         ch = p.read_from(0x03,1)  # Day
+            #         print(f"P = 0x{ch[0]:02X}\n")
+            #         print(f"Day = 0x{ch[0]:02X}\n")
+            #     except I2cNackError:
+            #         # print(f"No ACK from 0x{addr:02X}")
+            #         print(".", end="", flush=True)
+            #         # break
+            #     sleep(0.01)
     except KeyboardInterrupt:
         print("Interrupted by user")
     finally: 

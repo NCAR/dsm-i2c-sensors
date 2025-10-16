@@ -4,7 +4,7 @@ TI ADC128D818 – 8ch, 12-bit ΔΣ ADC w/ temp sensor and internal 2.56V Vref.
 from __future__ import annotations
 from enum import IntEnum
 from typing import Dict, Any, List, Optional, Tuple
-from .base import I2CDevice
+from .i2c_device import I2CDevice
 import i2c_sensors.utils as utils
 import time
 import logging

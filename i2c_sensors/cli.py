@@ -1,7 +1,7 @@
 from __future__ import annotations
 import argparse, time, logging
 from .utils import init_logger 
-from .base import I2CConfig
+from .i2c_device import I2CConfig
 from .ina260 import INA260, INA260Config
 from .adc128d818 import ADC128D818, ADC128D818Config
 from .export import write_auto
