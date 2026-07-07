@@ -1,73 +1,118 @@
 ---
 - name: Install i2c_sensors and power_monitor on Raspberry Pi
-  hosts: { rpi_hosts }
+  hosts: rpi_hosts
   become: true
   vars:
-    git_repo_url_for_i2c_sensors: "github.com:NCAR/dsm-i2c-sensors.git"
-    i2c_repo: "{git_repo_url_for_i2c_sensors}" | default("https://github.com/SKF-UCAR/i2c_sensors.git")
-    install_dir: "{install_dir}" | default("/opt")
-    power_entry: "power_monitor.py"
+    # The repo is (or may become) private, so it is cloned over SSH using the
+    # daq user's key.  Override git_repo_url_for_i2c_sensors / i2c_install_dir
+    # on the command line to change these defaults.
+    git_repo_url_for_i2c_sensors: "git@github.com:NCAR/dsm-i2c-sensors.git"
+    i2c_repo: "{{ git_repo_url_for_i2c_sensors }}"
+    install_dir: "{{ i2c_install_dir | default('/opt') }}"
+
+    # Match the dsm-platform virtual-environment convention (see
+    # dsm-platform/ansible/python-virtualenv.yml and
+    # scripts/checkout-projects.sh:setup_venv): a single shared virtualenv in
+    # the daq user's home, created with `virtualenv` (the python3-virtualenv
+    # package) and deliberately WITHOUT --system-site-packages, owned by daq.
+    venv_user: "daq"
+    venv_dir: "/home/{{ venv_user }}/venv"
+
+    # Groups the service user needs to reach the sensor hardware:
+    #   i2c     - native /dev/i2c-* buses (smbus2)
+    #   dialout - USB/serial devices (/dev/ttyUSB*, /dev/ttyACM*) and, via the
+    #             FTDI udev rule below, raw FTDI USB access (pyftdi/libusb)
+    device_groups:
+      - i2c
+      - dialout
 
   tasks:
     - name: Update apt cache
-      apt:
-        update_cache: yes
+      ansible.builtin.apt:
+        update_cache: true
         cache_valid_time: 3600
 
     - name: Install system packages
-      apt:
+      ansible.builtin.apt:
         name:
           - git
           - python3
-          - python3-venv
           - python3-pip
+          - pipenv
+          - python3-virtualenv
           - i2c-tools
         state: present
-        update_cache: yes
 
-    - name: Clone i2c_sensors repo
-      git:
+    - name: Clone dsm-i2c-sensors repo over SSH as {{ venv_user }}
+      become: true
+      become_user: "{{ venv_user }}"
+      ansible.builtin.git:  # noqa: latest[git]
         repo: "{{ i2c_repo }}"
         dest: "{{ install_dir }}/i2c_sensors"
         version: HEAD
-        force: yes
+        force: true
 
-    - name: Create .venv for i2c_sensors
-      python_venv:
-        path: "{{ install_dir }}/i2c_sensors/.venv"
-        python: python3
+    - name: Create shared virtualenv (no system-site-packages) as {{ venv_user }}
+      become: true
+      become_user: "{{ venv_user }}"
+      ansible.builtin.command:
+        cmd: "virtualenv {{ venv_dir }}"
+        creates: "{{ venv_dir }}/bin/activate"
 
-    - name: Install i2c_sensors requirements
-      pip:
+    - name: Install i2c_sensors requirements into the virtualenv
+      become: true
+      become_user: "{{ venv_user }}"
+      ansible.builtin.pip:
         requirements: "{{ install_dir }}/i2c_sensors/requirements.txt"
-        virtualenv: "{{ install_dir }}/i2c_sensors/.venv"
+        virtualenv: "{{ venv_dir }}"
 
     - name: Install i2c_sensors package into the virtualenv (editable)
-      pip:
+      become: true
+      become_user: "{{ venv_user }}"
+      ansible.builtin.pip:
         name: "{{ install_dir }}/i2c_sensors"
-        virtualenv: "{{ install_dir }}/i2c_sensors/.venv"
-        editable: yes
+        virtualenv: "{{ venv_dir }}"
+        editable: true
 
     - name: Enable I2C in config.txt
-      lineinfile:
+      ansible.builtin.lineinfile:
         path: /boot/firmware/config.txt
         regexp: "^dtparam=i2c_arm="
         line: "dtparam=i2c_arm=on"
-        create: yes
+        create: true
+        mode: "0755"
 
     - name: Ensure i2c-dev module is loaded
-      modprobe:
+      community.general.modprobe:
         name: i2c-dev
         state: present
 
+    - name: Add device-access groups to {{ venv_user }}
+      ansible.builtin.user:
+        name: "{{ venv_user }}"
+        groups: "{{ device_groups }}"
+        append: true
+
+    - name: Install udev rule for FTDI USB devices (pyftdi/libusb)
+      ansible.builtin.copy:
+        dest: /etc/udev/rules.d/60-ftdi-i2c-sensors.rules
+        content: |
+          # Allow the dialout group to access FTDI USB devices via libusb so
+          # the power-monitor service (running as {{ venv_user }}) can drive
+          # FTDI I2C adapters with pyftdi.
+          SUBSYSTEM=="usb", ATTR{idVendor}=="0403", GROUP="dialout", MODE="0664"
+        mode: "0644"
+      notify: Reload udev rules
+
     - name: Copy power-monitor config file
-      copy:
+      ansible.builtin.copy:
         src: "{{ install_dir }}/i2c_sensors/power_monitor/power_monitor.config"
         dest: "{{ install_dir }}/i2c_sensors/power-monitor.config"
+        remote_src: true
         mode: "0644"
 
     - name: Create systemd service for power_monitor
-      copy:
+      ansible.builtin.copy:
         dest: /etc/systemd/system/power-monitor.service
         content: |
           [Unit]
@@ -75,19 +120,29 @@
           After=network.target
 
           [Service]
-          ExecStart={{ install_dir }}/i2c_sensors/power-monitor --config {{ install_dir }}/i2c_sensors/power-monitor.config
-          Environment="PATH={{ install_dir }}/i2c_sensors/.venv/bin"
+          # power-monitor is the console-script entry point installed into the
+          # shared virtualenv (see pyproject.toml [project.scripts]).  It runs
+          # as {{ venv_user }}, which is in the i2c and dialout groups so it can
+          # open native I2C, serial, and FTDI-over-USB devices.
+          ExecStart={{ venv_dir }}/bin/power-monitor --config {{ install_dir }}/i2c_sensors/power-monitor.config
+          Environment="PATH={{ venv_dir }}/bin"
           WorkingDirectory={{ install_dir }}/i2c_sensors
           Restart=always
-          User=root
+          User={{ venv_user }}
 
           [Install]
           WantedBy=multi-user.target
         mode: "0644"
 
     - name: Enable and start services
-      systemd:
-        name: power_monitor
-        enabled: yes
+      ansible.builtin.systemd:
+        name: power-monitor
+        enabled: true
         state: started
-        daemon_reload: yes
+        daemon_reload: true
+
+  handlers:
+    - name: Reload udev rules
+      ansible.builtin.command:
+        cmd: udevadm control --reload-rules
+      changed_when: false
