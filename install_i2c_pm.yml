@@ -1,6 +1,6 @@
 ---
 - name: Install i2c_sensors and power_monitor on Raspberry Pi
-  hosts: rpi_hosts
+  hosts: DSMs
   become: true
   vars:
     # The repo is (or may become) private, so it is cloned over SSH using the
@@ -43,14 +43,51 @@
           - i2c-tools
         state: present
 
+    - name: Ensure SSH directory exists for {{ venv_user }}
+      ansible.builtin.file:
+        path: "/home/{{ venv_user }}/.ssh"
+        state: directory
+        owner: "{{ venv_user }}"
+        group: "{{ venv_user }}"
+        mode: "0700"
+
+    - name: Copy SSH key for i2c_sensors repo access
+      ansible.builtin.copy:
+        src: /ansible/local/.ssh/id_ed25519_i2c
+        dest: "/home/{{ venv_user }}/.ssh/id_ed25519_i2c"
+        owner: "{{ venv_user }}"
+        group: "{{ venv_user }}"
+        mode: "0600"
+
+    - name: Configure SSH for github.com access
+      ansible.builtin.copy:
+        dest: "/home/{{ venv_user }}/.ssh/config"
+        content: |
+          Host github.com
+            HostName github.com
+            User git
+            IdentityFile ~/.ssh/id_ed25519_i2c
+            StrictHostKeyChecking no
+        owner: "{{ venv_user }}"
+        group: "{{ venv_user }}"
+        mode: "0600"
+
+    - name: Adjust ownership of i2c_sensors repo folder
+      ansible.builtin.file:
+        path: "{{ install_dir }}/i2c_sensors"
+        owner: "{{ venv_user }}"
+        group: "{{ venv_user }}"
+        recurse: true
+
     - name: Clone dsm-i2c-sensors repo over SSH as {{ venv_user }}
       become: true
       become_user: "{{ venv_user }}"
-      ansible.builtin.git:  # noqa: latest[git]
+      ansible.builtin.git:
         repo: "{{ i2c_repo }}"
         dest: "{{ install_dir }}/i2c_sensors"
         version: HEAD
         force: true
+        accept_hostkey: yes
 
     - name: Create shared virtualenv (no system-site-packages) as {{ venv_user }}
       become: true
@@ -111,6 +148,14 @@
         remote_src: true
         mode: "0644"
 
+    - name: Create /var/lib/node_exporter folder if doesn't exists
+      ansible.builtin.file:
+        path: /var/lib/node_exporter
+        state: directory
+        owner: "{{ venv_user }}"
+        group: "{{ venv_user }}"
+        mode: "0755"
+
     - name: Create systemd service for power_monitor
       ansible.builtin.copy:
         dest: /etc/systemd/system/power-monitor.service
@@ -124,7 +169,7 @@
           # shared virtualenv (see pyproject.toml [project.scripts]).  It runs
           # as {{ venv_user }}, which is in the i2c and dialout groups so it can
           # open native I2C, serial, and FTDI-over-USB devices.
-          ExecStart={{ venv_dir }}/bin/power-monitor --config {{ install_dir }}/i2c_sensors/power-monitor.config
+          ExecStart={{ venv_dir }}/bin/power-monitor --config {{ install_dir }}/i2c_sensors/power-monitor.config --out /var/lib/node_exporter/pm.prom
           Environment="PATH={{ venv_dir }}/bin"
           WorkingDirectory={{ install_dir }}/i2c_sensors
           Restart=always
@@ -133,6 +178,39 @@
           [Install]
           WantedBy=multi-user.target
         mode: "0644"
+
+    - name: Check if prometheus-node-exporter.service is installed
+      ansible.builtin.command:
+        cmd: systemctl list-unit-files prometheus-node-exporter.service --no-legend --no-pager
+      register: node_exporter_service
+      failed_when: false
+      changed_when: false
+
+    - name: Ensure prometheus-node-exporter ARGS includes textfile collector directory
+      ansible.builtin.shell: |
+        envfile=/etc/default/prometheus-node-exporter
+        if grep -q -- '^ARGS=.*--collector.textfile.directory=/var/lib/node_exporter' "$envfile" 2>/dev/null; then
+          exit 0
+        fi
+        if grep -q '^ARGS=' "$envfile" 2>/dev/null; then
+          sed -i 's|^ARGS=\(.*\)$|ARGS=\1 --collector.textfile.directory=/var/lib/node_exporter|' "$envfile"
+        else
+          mkdir -p "$(dirname "$envfile")"
+          echo 'ARGS=--collector.textfile.directory=/var/lib/node_exporter' >> "$envfile"
+        fi
+
+      args:
+        executable: /bin/bash
+      register: node_exporter_args
+      when: node_exporter_service.rc == 0
+
+    - name: Restart prometheus-node-exporter to reload updated config
+      ansible.builtin.systemd:
+        name: prometheus-node-exporter
+        state: restarted
+      when:
+        - node_exporter_service.rc == 0
+        - node_exporter_args.changed
 
     - name: Enable and start services
       ansible.builtin.systemd:
