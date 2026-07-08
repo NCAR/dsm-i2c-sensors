@@ -1,10 +1,5 @@
 # Usage
 
-
-2. Inventory path mismatch. The container's ANSIBLE_INVENTORY env points at /ansible/local/inventory/inventory.ini, but your actual file is /ansible/local/inventory.ini (no inventory/ subdir). So you must pass -i explicitly.
-
-Recommended: mount the repo at runtime
-
 From the eol-ansible-stack directory on the host:
 
 ```
