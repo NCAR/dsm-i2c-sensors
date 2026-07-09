@@ -1,6 +1,10 @@
-# Usage
+# Deployment and Usage
 
-From the eol-ansible-stack directory on the host:
+To avoid having installation steps scattered across multiple repos, the repo contains an Ansible playbook that installs and configures the `dsm-i2c-sensors` service on a target host. It also ensures that Prometheus node exporter is configured to scrape the metrics.
+
+Using the playbook requires an Ansible control host (we recommend the [eol-ansible-stack](https://github.com/NCAR/eol-ansible-stack) container) and a target host (the RPi that will run the service). The playbook is idempotent, so you can re-run it to update the service or exporter configuration.
+
+From the eol-ansible-stack directory on the ansible host:
 
 ```
 cd /DATA/slavafedor/git/ISFS/eol-ansible-stack
@@ -25,7 +29,7 @@ ansible-playbook -i /ansible/local/inventory.ini \
 
 Alternative: copy/symlink into playbooks/
 
-If you'd rather run it the "normal" way (playbooks/ is already mou
+If you'd rather run it the "normal" way (playbooks/ is already mounted)
 
 ```
 cp /DATA/slavafedor/git/ISFS/dsm-i2c-sensors/install_i2c_pm.yml \
