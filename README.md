@@ -39,6 +39,44 @@ pip install -e .
 
 ---
 
+## Deployment via Ansible (Raspberry Pi / DSM)
+
+For deploying `power-monitor` as a systemd service on the DSMs, use the
+[`install_i2c_pm.yml`](./install_i2c_pm.yml) Ansible playbook instead of
+installing by hand. See **[docs/usage.md](./docs/usage.md)** for how to run it
+(from the `eol-ansible-stack` container) and what the target hosts need.
+
+The playbook (run with `become: true` against the `DSMs` inventory group):
+
+- Installs system packages (`git`, `python3`, `pipenv`, `python3-virtualenv`,
+  `i2c-tools`) and enables I²C (`dtparam=i2c_arm=on`, `i2c-dev` module).
+- Clones this repo to `{{ install_dir }}/i2c_sensors` (default `/opt`) over SSH
+  as the `daq` user, then creates a shared virtualenv at `/home/daq/venv` and
+  installs the package (editable) plus its requirements — matching the
+  `dsm-platform` venv convention.
+- Adds `daq` to the `i2c` and `dialout` groups and installs a udev rule so the
+  service can reach native I²C, serial, and FTDI-over-USB (pyftdi/libusb)
+  devices.
+- Installs and starts the `power-monitor.service` systemd unit, which writes
+  Prometheus metrics to `/var/lib/node_exporter/pm.prom`.
+- Wires the metrics into `prometheus-node-exporter` (if it is installed) by
+  adding `--collector.textfile.directory=/var/lib/node_exporter` to its `ARGS=`
+  and restarting it — see [Using metrics via Prometheus](#using-metrics-via-prometheus)
+  for the manual equivalent.
+
+Common overrides (pass with `-e`):
+
+```bash
+# clone over HTTPS instead of the default SSH URL (once the repo is public)
+-e git_repo_url_for_i2c_sensors=https://github.com/NCAR/dsm-i2c-sensors.git
+# install somewhere other than /opt
+-e i2c_install_dir=/opt
+# run the service as a user other than daq
+-e venv_user=daq
+```
+
+---
+
 ## File structure
 
 ```bash
@@ -53,7 +91,8 @@ pip install -e .
 │   ├── I2C_Basic_Address_and_Data_Frames.jpg
 │   ├── image.png
 │   ├── TI_ADC_adc128d818.pdf
-│   └── TI_Power_Monitor_ina260.pdf
+│   ├── TI_Power_Monitor_ina260.pdf
+│   └── usage.md                # How to run the Ansible deployment playbook
 ├── i2c_sensors
 │   ├── adc128d818.py           # ADC128D818 driver
 │   ├── bmp280.py               # BMP280 driver
@@ -413,6 +452,11 @@ options:
 ---
 
 ## Using metrics via Prometheus
+
+> **Note:** The [Ansible deployment playbook](#deployment-via-ansible-raspberry-pi--dsm)
+> (`install_i2c_pm.yml`) performs the node-exporter setup below automatically
+> (creates `/var/lib/node_exporter`, adds the textfile-collector `ARGS`, and
+> restarts the service). The steps here are the manual equivalent.
 
 ### 1. Exporters Available as Debian Packages
 
