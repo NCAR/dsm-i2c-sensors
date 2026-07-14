@@ -212,4 +212,69 @@ def schedule_periodic(func, interval: float, *args, **kwargs) -> threading.Event
     return stop_event
 
 
+def main() -> int:
+    """
+    Parse CLI arguments and run I2C scan via an FTDI adapter.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Scan I2C bus using an FTDI adapter"
+    )
+    parser.add_argument("ftdi_url", help="FTDI adapter URL")
+    parser.add_argument(
+        "--bus",
+        type=int,
+        default=0,
+        help="I2C bus number to scan",
+    )
+    parser.add_argument(
+        "--logfile",
+        help="Optional log file path",
+    )
+    parser.add_argument(
+        "--loglevel",
+        default="INFO",
+        help="Logging level",
+    )
+    args = parser.parse_args()
+
+    level = getattr(logging, args.loglevel.upper(), logging.INFO)
+    logger = init_logger(level=level, logfile=args.logfile)
+
+    try:
+        from i2c_sensors.i2c_adapter import FTDIAdapter
+    except ImportError as exc:
+        logger.error("FTDI adapter class not available: %s", exc)
+        return 1
+
+    try:
+        adapter = FTDIAdapter(args.ftdi_url)
+    except Exception as exc:
+        logger.error("Failed to create FTDI adapter: %s", exc)
+        return 1
+
+    try:
+        devices = scan_i2c(adapter, bus=args.bus, logger=logger)
+        if devices:
+            logger.info(
+                "Found devices: %s",
+                ", ".join(f"0x{addr:02X}" for addr in devices),
+            )
+        else:
+            logger.info("No devices found.")
+    finally:
+        try:
+            adapter.close()
+        except Exception:
+            pass
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
 ### End of i2c_sensors/utils.py ###
+

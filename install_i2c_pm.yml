@@ -186,17 +186,32 @@
       failed_when: false
       changed_when: false
 
+    - name: Install or update prometheus-node-exporter package
+      ansible.builtin.apt:
+        name: prometheus-node-exporter
+        state: latest
+        update_cache: yes
+      register: node_exporter_pkg
+
     - name: Ensure prometheus-node-exporter ARGS includes textfile collector directory
       ansible.builtin.shell: |
         envfile=/etc/default/prometheus-node-exporter
-        if grep -q -- '^ARGS=.*--collector.textfile.directory=/var/lib/node_exporter' "$envfile" 2>/dev/null; then
+        collector='--collector.textfile.directory=/var/lib/node_exporter'
+        # if already present, nothing to do
+        if grep -q -- "^ARGS=.*${collector}" "$envfile" 2>/dev/null; then
           exit 0
         fi
         if grep -q '^ARGS=' "$envfile" 2>/dev/null; then
-          sed -i 's|^ARGS=\(.*\)$|ARGS=\1 --collector.textfile.directory=/var/lib/node_exporter|' "$envfile"
+          # If ARGS is quoted: ARGS="..."
+          if grep -q '^ARGS="' "$envfile" 2>/dev/null; then
+            sed -i 's|^ARGS="\(.*\)"$|ARGS="\1 ${collector}"|' "$envfile"
+          else
+            # Unquoted ARGS
+            sed -i 's|^ARGS=\(.*\)$|ARGS=\1 ${collector}|' "$envfile"
+          fi
         else
           mkdir -p "$(dirname "$envfile")"
-          echo 'ARGS=--collector.textfile.directory=/var/lib/node_exporter' >> "$envfile"
+          echo "ARGS=${collector}" >> "$envfile"
         fi
 
       args:
